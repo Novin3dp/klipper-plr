@@ -25,7 +25,7 @@ Klipper PLR records the toolhead position, extruder position, G-code file path a
 - Backup power that keeps the host and MCU alive during the detection/capture window.
 - Absolute extrusion (`M82`).
 
-The installer downloads the `gcode_shell_command` extension when it is not already installed. That extension is an external component originally created by Arksine and distributed through KIAUH; it is not bundled in this MIT repository. citeturn1search2
+The installer downloads the G-Code Shell Command extension when it is not already installed. It is kept out of this MIT repository because it is an external KIAUH component. KIAUH documents the extension and its installation separately.
 
 ## Installation
 
@@ -35,12 +35,19 @@ cd klipper-plr
 ./install.sh
 ```
 
+If the cloned files do not have executable metadata on your system, use:
+
+```bash
+chmod +x install.sh uninstall.sh
+./install.sh
+```
+
 The installer automatically detects the current user and standard Klipper/Moonraker paths. On a fresh installation it asks only for:
 
 1. **Power-loss GPIO**, for example `PB2`.
 2. **Z lift**, measured on the actual printer.
 
-The installer also offers optional default bed/nozzle temperatures. Existing installation settings are reused during updates, so Moonraker can run the installer non-interactively.
+The installer also asks for optional default bed/nozzle temperatures. Existing settings are stored locally in `printer_data/plr/install.conf`, so future Moonraker updates can reuse them.
 
 ### Measuring Z lift
 
@@ -139,7 +146,7 @@ cd ~/klipper-plr
 ./uninstall.sh
 ```
 
-The uninstall script removes the PLR include/configuration and generated recovery files, but intentionally does not attempt to rewrite your slicer profile or automatically remove the `END_PRINT` snippet.
+The uninstall script removes the PLR include/configuration and generated recovery files, but intentionally leaves `gcode_shell_command.py` and the `END_PRINT` snippet untouched.
 
 ## Project status
 

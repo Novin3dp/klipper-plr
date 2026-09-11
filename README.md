@@ -25,7 +25,30 @@ Klipper PLR records the toolhead position, extruder position, G-code file path a
 - Backup power that keeps the host and MCU alive during the detection/capture window.
 - Absolute extrusion (`M82`).
 
-The installer downloads the G-Code Shell Command extension when it is not already installed. It is kept out of this MIT repository because it is an external KIAUH component. KIAUH documents the extension and its installation separately.
+### G-Code Shell Command extension
+
+This is required, and is not bundled here because KIAUH is GPL-3.0 licensed
+while this repository is MIT.
+
+The installer handles it for you, in this order:
+
+1. If it is already in `~/klipper/klippy/extras/`, nothing happens.
+2. If you have KIAUH cloned, the local copy is used. No network needed.
+3. Otherwise it is downloaded from the KIAUH repository.
+
+If the download fails or the KIAUH layout has changed, install it yourself
+and re-run `install.sh`:
+
+```bash
+# through KIAUH:  Advanced -> G-Code Shell Command
+# or, if KIAUH is already cloned:
+cp ~/kiauh/kiauh/extensions/gcode_shell_cmd/assets/gcode_shell_command.py \
+   ~/klipper/klippy/extras/
+```
+
+Note that updating Klipper can remove this extension. If PLR suddenly stops
+working after a Klipper update with `Unknown config object
+'gcode_shell_command'`, reinstall it the same way.
 
 ## Installation
 

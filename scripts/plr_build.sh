@@ -30,11 +30,17 @@ RE=$(getvar plr_e)
 [ ! -f "$SRC" ] && { echo "ERROR: file not found: $SRC"; exit 1; }
 [ -z "$FPOS" ] || [ "$FPOS" = "0" ] && { echo "ERROR: plr_fpos invalid"; exit 1; }
 
+echo "Source: $SRC"
+echo "FPOS:   $FPOS"
+echo "X=$RX Y=$RY Z=$RZ E=$RE"
+
 BASENAME=$(basename "$SRC")
 RESUME_FILE="${PLR_PATH}/${BASENAME}"
 
 LAYER_Z=$(head -c "$FPOS" "$SRC" | grep -o "^;Z:[0-9.]\+" | tail -1 | cut -d: -f2)
 [ -z "$LAYER_Z" ] && LAYER_Z="$RZ"
+
+echo "Layer Z: $LAYER_Z"
 
 START_LINE=$(grep -m1 '^[[:space:]]*START_PRINT' "$SRC" || true)
 BED_TEMP=$(printf '%s\n' "$START_LINE" | sed -n 's/.*BED_TEMP=\([0-9.]*\).*/\1/p')
@@ -42,12 +48,18 @@ EXT_TEMP=$(printf '%s\n' "$START_LINE" | sed -n 's/.*EXTRUDER_TEMP=\([0-9.]*\).*
 [ -z "$BED_TEMP" ] && BED_TEMP=$DEFAULT_BED
 [ -z "$EXT_TEMP" ] && EXT_TEMP=$DEFAULT_EXT
 
+echo "Bed: $BED_TEMP  Ext: $EXT_TEMP"
+
 Z_MAX=$(awk '/^\[stepper_z\]/{inz=1;next}/^\[/{inz=0}inz && /^[[:space:]]*position_max[[:space:]]*:/{sub(/.*:[[:space:]]*/,"");sub(/[[:space:]]*#.*/,"");print;exit}' "$PRINTER_CFG")
 [ -z "$Z_MAX" ] && Z_MAX=300
 SAFE_Z=$(awk -v z="$LAYER_Z" -v l="$Z_LIFT" 'BEGIN{printf "%.3f",z+l}')
 
+echo "Z max:  $Z_MAX"
+echo "Safe Z: $SAFE_Z"
+
 if awk -v s="$SAFE_Z" -v zm="$Z_MAX" 'BEGIN{exit !(s>zm)}'; then
     echo "ERROR: Safe Z ($SAFE_Z) exceeds Z max ($Z_MAX)"
+    echo "Resume at this height is not safe. Manual intervention required."
     exit 1
 fi
 

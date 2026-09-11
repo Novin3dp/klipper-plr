@@ -85,18 +85,59 @@ chmod 600 "$SETTINGS_FILE"
 
 # Install the external G-Code Shell Command extension only when needed.
 # It is not bundled here because KIAUH is GPL-3.0 licensed.
+#
+# A local KIAUH checkout is preferred over downloading: it is faster, works
+# offline, and matches the version the user already has.
+shell_ext_valid() {
+    grep -q "load_config_prefix" "$1" 2>/dev/null
+}
+
 if [ -f "$SHELL_EXT" ]; then
     ok "gcode_shell_command.py already installed"
 else
-    info "Downloading gcode_shell_command.py from KIAUH..."
-    command -v curl >/dev/null 2>&1 || die "curl is required to download gcode_shell_command.py"
-    tmp="$(mktemp)"
-    trap 'rm -f "$tmp"' EXIT
-    curl -fsSL --retry 3 "$SHELL_URL" -o "$tmp" || die "Could not download gcode_shell_command.py"
-    grep -q "gcode_shell_command" "$tmp" || die "Downloaded shell command extension looks invalid"
-    cp "$tmp" "$SHELL_EXT"
-    chmod 644 "$SHELL_EXT"
-    ok "gcode_shell_command.py installed"
+    installed=0
+
+    for candidate in \
+        "${USER_HOME}/kiauh/kiauh/extensions/gcode_shell_cmd/assets/gcode_shell_command.py" \
+        "${USER_HOME}/kiauh/resources/gcode_shell_command.py"
+    do
+        if [ -f "$candidate" ] && shell_ext_valid "$candidate"; then
+            info "Using local KIAUH copy..."
+            cp "$candidate" "$SHELL_EXT"
+            chmod 644 "$SHELL_EXT"
+            ok "gcode_shell_command.py installed from ${candidate}"
+            installed=1
+            break
+        fi
+    done
+
+    if [ "$installed" -eq 0 ]; then
+        info "Downloading gcode_shell_command.py from KIAUH..."
+        command -v curl >/dev/null 2>&1 || die "curl is required to download gcode_shell_command.py"
+        tmp="$(mktemp)"
+        trap 'rm -f "$tmp"' EXIT
+        curl -fsSL --retry 3 "$SHELL_URL" -o "$tmp" \
+            || die "Could not download gcode_shell_command.py from ${SHELL_URL}"
+
+        if ! shell_ext_valid "$tmp"; then
+            echo -e "${R}FAIL${N} The downloaded file is not a valid Klipper extension."
+            echo ""
+            echo "The KIAUH repository layout may have changed."
+            echo "Install the extension manually, then re-run this script:"
+            echo ""
+            echo "  through KIAUH:  Advanced -> G-Code Shell Command"
+            echo ""
+            echo "  or, if you already have KIAUH cloned:"
+            echo "    cp ~/kiauh/kiauh/extensions/gcode_shell_cmd/assets/gcode_shell_command.py \\\" 
+            echo "       ${SHELL_EXT}"
+            echo ""
+            exit 1
+        fi
+
+        cp "$tmp" "$SHELL_EXT"
+        chmod 644 "$SHELL_EXT"
+        ok "gcode_shell_command.py installed"
+    fi
 fi
 
 subst(){

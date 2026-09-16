@@ -42,6 +42,7 @@ mkdir -p "$PLR_DIR" "$GCODE_DIR/plr"
 
 # Load previous settings for non-interactive Moonraker updates.
 PLR_PIN=""; Z_LIFT=""; DEF_BED="60"; DEF_EXT="240"
+PLR_SHUTDOWN=""; SHUTDOWN_DELAY=""
 if [ -f "$SETTINGS_FILE" ]; then
     # shellcheck disable=SC1090
     . "$SETTINGS_FILE"
@@ -75,8 +76,34 @@ else
     DEF_BED="${DEF_BED:-60}"; DEF_EXT="${DEF_EXT:-240}"
 fi
 
+if [ -z "${PLR_SHUTDOWN:-}" ]; then
+    echo ""
+    echo "Safe host shutdown on power loss"
+    echo "--------------------------------"
+    echo "Halts the Pi after the capture so the SD card is not corrupted"
+    echo "by the power cut. Requires a passwordless sudo rule for shutdown."
+    echo ""
+    echo "Only enable this if your backup power holds the host up long"
+    echo "enough to halt (roughly 15 seconds or more)."
+    echo ""
+    read -r -p "Enable safe shutdown? [y/N]: " ans || true
+    case "$ans" in
+        [Yy]*) PLR_SHUTDOWN=1 ;;
+        *)     PLR_SHUTDOWN=0 ;;
+    esac
+fi
+
+if [ "$PLR_SHUTDOWN" = "1" ] && [ -z "${SHUTDOWN_DELAY:-}" ]; then
+    read -r -p "Seconds to wait before halting [3]: " SHUTDOWN_DELAY || true
+    SHUTDOWN_DELAY="${SHUTDOWN_DELAY:-3}"
+fi
+SHUTDOWN_DELAY="${SHUTDOWN_DELAY:-3}"
+echo "$SHUTDOWN_DELAY" | grep -Eq '^[0-9]+$' || die "Shutdown delay must be a whole number of seconds."
+
 cat > "$SETTINGS_FILE" <<EOF
 PLR_PIN='$PLR_PIN'
+PLR_SHUTDOWN='$PLR_SHUTDOWN'
+SHUTDOWN_DELAY='$SHUTDOWN_DELAY'
 Z_LIFT='$Z_LIFT'
 DEF_BED='$DEF_BED'
 DEF_EXT='$DEF_EXT'
@@ -128,7 +155,7 @@ else
             echo "  through KIAUH:  Advanced -> G-Code Shell Command"
             echo ""
             echo "  or, if you already have KIAUH cloned:"
-            echo "    cp ~/kiauh/kiauh/extensions/gcode_shell_cmd/assets/gcode_shell_command.py \\\" 
+            echo "    cp ~/kiauh/kiauh/extensions/gcode_shell_cmd/assets/gcode_shell_command.py \\"
             echo "       ${SHELL_EXT}"
             echo ""
             exit 1
@@ -145,14 +172,16 @@ subst(){
         -e "s|__PLR_PIN__|${PLR_PIN}|g" \
         -e "s|__Z_LIFT__|${Z_LIFT}|g" \
         -e "s|__DEF_BED__|${DEF_BED}|g" \
-        -e "s|__DEF_EXT__|${DEF_EXT}|g" "$1" > "$2"
+        -e "s|__DEF_EXT__|${DEF_EXT}|g" \
+        -e "s|__SHUTDOWN_DELAY__|${SHUTDOWN_DELAY}|g" "$1" > "$2"
 }
 
 info "Installing PLR files..."
 subst "$REPO_DIR/config/plr.cfg" "$CONFIG_DIR/plr.cfg.new"
 subst "$REPO_DIR/scripts/plr_build.sh" "$PLR_DIR/plr_build.sh.new"
 subst "$REPO_DIR/scripts/clear_plr.sh" "$PLR_DIR/clear_plr.sh.new"
-chmod +x "$PLR_DIR/plr_build.sh.new" "$PLR_DIR/clear_plr.sh.new"
+subst "$REPO_DIR/scripts/plr_shutdown.sh" "$PLR_DIR/plr_shutdown.sh.new"
+chmod +x "$PLR_DIR/plr_build.sh.new" "$PLR_DIR/clear_plr.sh.new" "$PLR_DIR/plr_shutdown.sh.new"
 
 if [ -f "$CONFIG_DIR/plr.cfg" ]; then
     cp "$CONFIG_DIR/plr.cfg" "$CONFIG_DIR/plr.cfg.bak.$(date +%Y%m%d_%H%M%S)"
@@ -160,7 +189,43 @@ fi
 mv "$CONFIG_DIR/plr.cfg.new" "$CONFIG_DIR/plr.cfg"
 mv "$PLR_DIR/plr_build.sh.new" "$PLR_DIR/plr_build.sh"
 mv "$PLR_DIR/clear_plr.sh.new" "$PLR_DIR/clear_plr.sh"
+mv "$PLR_DIR/plr_shutdown.sh.new" "$PLR_DIR/plr_shutdown.sh"
 ok "PLR configuration and scripts installed"
+
+# ============================================================
+# Safe host shutdown (optional)
+# ============================================================
+SUDOERS_FILE="/etc/sudoers.d/klipper-plr"
+
+if [ "$PLR_SHUTDOWN" = "1" ]; then
+    if sudo -n true 2>/dev/null || sudo -v 2>/dev/null; then
+        tmp_sudo="$(mktemp)"
+        printf '%s ALL=(root) NOPASSWD: /sbin/shutdown\n' "$(id -un)" > "$tmp_sudo"
+
+        # visudo -c refuses to install a broken rule, which would otherwise
+        # lock the user out of sudo entirely.
+        if sudo visudo -c -f "$tmp_sudo" >/dev/null 2>&1; then
+            sudo install -m 0440 -o root -g root "$tmp_sudo" "$SUDOERS_FILE"
+            ok "Passwordless shutdown rule installed"
+        else
+            warn "Generated sudoers rule failed validation - shutdown disabled"
+            PLR_SHUTDOWN=0
+        fi
+        rm -f "$tmp_sudo"
+    else
+        warn "No sudo access - cannot install the shutdown rule"
+        PLR_SHUTDOWN=0
+    fi
+fi
+
+if [ "$PLR_SHUTDOWN" != "1" ]; then
+    # Comment the shutdown call out of the installed config.
+    sed -i \
+        -e 's|^\( *\)M118 PLR shutting down host|\1#M118 PLR shutting down host|' \
+        -e 's|^\( *\)RUN_SHELL_COMMAND CMD=PLR_SHUTDOWN|\1#RUN_SHELL_COMMAND CMD=PLR_SHUTDOWN|' \
+        "${CONFIG_DIR}/plr.cfg"
+    ok "Safe shutdown disabled (host stays powered after capture)"
+fi
 
 # Add include once, before SAVE_CONFIG.
 if ! grep -qE '^\[include[[:space:]]+plr\.cfg\]$' "$PRINTER_CFG"; then

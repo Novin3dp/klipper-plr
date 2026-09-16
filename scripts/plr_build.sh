@@ -50,6 +50,30 @@ EXT_TEMP=$(printf '%s\n' "$START_LINE" | sed -n 's/.*EXTRUDER_TEMP=\([0-9.]*\).*
 
 echo "Bed: $BED_TEMP  Ext: $EXT_TEMP"
 
+# Last part-cooling fan state before the cut point.
+# M106 sits earlier in the file than FPOS, so it is not part of the resumed
+# body and the fan would otherwise stay off for the rest of the print.
+# Secondary fans (P1, P2 ...) are skipped - only the default part fan.
+FAN_CMD=""
+FAN_CMD=$(head -c "$FPOS" "$SRC" | awk '
+/^[[:space:]]*M107([[:space:]]|$)/ { last = "M107"; next }
+/^[[:space:]]*M106([[:space:]]|$)/ {
+    if ($0 ~ /[[:space:]]P[1-9]/) next
+    line = $0
+    sub(/[[:space:]]*;.*$/, "", line)
+    sub(/[[:space:]]+$/, "", line)
+    last = line
+    next
+}
+END { if (last != "") print last }
+')
+
+if [ -n "$FAN_CMD" ]; then
+    echo "Fan:    $FAN_CMD"
+else
+    echo "Fan:    none found before cut point"
+fi
+
 Z_MAX=$(awk '/^\[stepper_z\]/{inz=1;next}/^\[/{inz=0}inz && /^[[:space:]]*position_max[[:space:]]*:/{sub(/.*:[[:space:]]*/,"");sub(/[[:space:]]*#.*/,"");print;exit}' "$PRINTER_CFG")
 [ -z "$Z_MAX" ] && Z_MAX=300
 SAFE_Z=$(awk -v z="$LAYER_Z" -v l="$Z_LIFT" 'BEGIN{printf "%.3f",z+l}')
@@ -76,6 +100,7 @@ rm -f "$RESUME_FILE"
     echo "G1 X${RX} Y${RY} F6000"
     echo "G1 Z${LAYER_Z} F600"
     echo "G92 E${RE}"
+    [ -n "$FAN_CMD" ] && echo "$FAN_CMD"
     echo "M118 PLR RESUMING"
 } >> "$RESUME_FILE"
 

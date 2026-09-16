@@ -1,3 +1,4 @@
-# Python
+*.bak
+*.bak.*
 __pycache__/
 *.pyc

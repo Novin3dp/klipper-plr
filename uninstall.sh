@@ -34,6 +34,10 @@ rm -f "$CONFIG_DIR/plr.cfg"
 rm -rf "$PLR_DIR"
 rm -rf "${USER_HOME}/printer_data/gcodes/plr"
 
+if [ -f /etc/sudoers.d/klipper-plr ]; then
+    sudo rm -f /etc/sudoers.d/klipper-plr && echo "Removed sudoers rule"
+fi
+
 echo "Klipper PLR files removed."
 echo "The END_PRINT snippet and gcode_shell_command.py were left untouched."
 echo "A printer.cfg/moonraker.conf backup was created before removal."

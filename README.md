@@ -48,7 +48,7 @@ cp ~/kiauh/kiauh/extensions/gcode_shell_cmd/assets/gcode_shell_command.py \
 
 Note that updating Klipper can remove this extension. If PLR suddenly stops
 working after a Klipper update with `Unknown config object
-'gcode_shell_command'`, reinstall it the same way.
+'tgcode_shell_command'`, reinstall it the same way.
 
 ## Installation
 
@@ -120,6 +120,43 @@ With normal printer power present, the input should report `RELEASED`. If the el
 
 Before a real print, follow **TESTING.md** and perform the dry run with the bed clear and no filament.
 
+## Safe host shutdown (optional)
+
+Cutting power to a running Linux host can corrupt the SD card. The installer
+can enable an automatic halt right after the capture.
+
+The sequence is:
+
+```
+24V lost -> capture writes variables.cfg -> wait N seconds -> sync -> halt
+```
+
+The shutdown worker is detached with `setsid`, because Klipper shuts itself
+down within moments of the power loss and would otherwise take the script
+with it.
+
+**Only enable this if your backup power holds the host up long enough.** A
+halt needs roughly 10-15 seconds on top of the capture. If the supercapacitor
+drains first you get exactly the uncontrolled power cut you were trying to
+avoid, so nothing is gained. Measure how long your host actually survives
+before enabling it.
+
+Enabling this installs `/etc/sudoers.d/klipper-plr`, allowing the Klipper
+user to run `/sbin/shutdown` without a password. The rule is validated with
+`visudo -c` before installation, so a malformed rule cannot lock you out of
+sudo. `uninstall.sh` removes it.
+
+**One behaviour to be aware of:** on a brief brownout the host halts and
+stays halted, even if mains power returns a second later. It only comes back
+when its own supply is cycled. If the host is powered from the same 24V rail
+this resolves itself; with an independent supply you have to power it
+manually.
+
+To turn it off later, comment out the `RUN_SHELL_COMMAND CMD=PLR_SHUTDOWN`
+line in `~/printer_data/config/plr.cfg` and restart.
+
+---
+
 ## Recovery workflow
 
 During a print, the configured power-loss input triggers `PLR_CAPTURE_POSITION`. The macro stores:
@@ -152,6 +189,29 @@ After a successful recovery print, the `END_PRINT` patch schedules automatic cle
 | `PLR_SAVE_LAYER Z=...` | Store a layer-height checkpoint |
 | `G31` | Clear PLR data when no recovery is pending |
 | `PLR_FORCE_CLEAR` | Force-clear PLR data |
+
+## State restored on resume
+
+The resume header rebuilds the machine state that lived *before* the cut
+point and is therefore missing from the resumed body:
+
+| State | How it is recovered |
+|---|---|
+| Bed and nozzle temperature | parsed from `START_PRINT` |
+| Position X/Y/Z | from the capture |
+| Extruder position | `G92 E` from the capture |
+| Part cooling fan | last `M106`/`M107` before the cut point |
+
+Fan recovery skips secondary fans (`M106 P1`, `P2`, ...) and only restores
+the default part fan. If the slicer had the fan off at that point, `M107` is
+emitted rather than nothing.
+
+Not currently restored: `M220` speed factor, `M221` flow factor, and bed mesh.
+Acceleration and velocity limits are not restored either, but Orca-style
+output re-emits `SET_VELOCITY_LIMIT` on almost every feature change, so they
+correct themselves within a few moves.
+
+---
 
 ## Safety notes
 

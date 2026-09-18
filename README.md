@@ -10,11 +10,14 @@ Klipper PLR records the toolhead position, extruder position, G-code file path a
 
 - Exact file-position recovery rather than replaying a complete layer.
 - Saves X/Y/Z/E, file path and file offset in Klipper `save_variables`.
+- Restores part-cooling fan state and extrusion mode (absolute or relative).
+- Keeps the slicer thumbnail, so the recovery file has a preview in Mainsail.
+- Survives a second power loss during a recovery print.
 - Layer-height checkpoint as a secondary recovery aid.
 - Automatic recovery-file generation after restart.
 - Automatic cleanup after a recovery print reaches `END_PRINT`.
-- Idempotent installer with backups.
-- Moonraker Update Manager integration.
+- Idempotent installer with backups; unattended re-runs for Moonraker updates.
+- Handles file names containing spaces, apostrophes and quotes.
 - Works with G-code stored in the normal `printer_data/gcodes` directory, including files copied from USB storage.
 
 ## Requirements
@@ -65,6 +68,16 @@ chmod +x install.sh uninstall.sh
 ./install.sh
 ```
 
+### Updating an existing installation
+
+If Klipper PLR was already installed from this repository, do **not** clone it again. Update the existing checkout and run the installer so the new files are copied into `printer_data` and any required configuration changes are applied:
+
+```bash
+cd ~/klipper-plr && git pull && ./install.sh
+```
+
+The installer keeps the previously saved printer-specific settings (such as the power-loss GPIO and Z lift) in `~/printer_data/plr/install.conf`, so an existing installation normally does not require entering them again.
+
 The installer automatically detects the current user and standard Klipper/Moonraker paths. On a fresh installation it asks only for:
 
 1. **Power-loss GPIO**, for example `PB2`.
@@ -90,9 +103,14 @@ If you cannot safely measure this value, abort the installer and measure it firs
 
 The installer cannot edit a slicer profile reliably, so these two settings remain manual:
 
-### 1. Use absolute extrusion
+### 1. Extrusion mode
 
-Disable relative E distances / enable `M82` behavior in the printer profile.
+Either mode works. The build script reads the last `M82` / `M83` before the cut
+point and rebuilds the header to match: absolute restores the saved E position,
+relative emits `G92 E0` and `M83`, because with relative deltas the absolute
+position is irrelevant.
+
+If the slicer emits neither, absolute (`M82`) is assumed.
 
 ### 2. Add a layer checkpoint
 
@@ -172,11 +190,21 @@ After the printer is powered back on and Klipper is restarted, a delayed macro b
 ~/printer_data/gcodes/plr/
 ```
 
-The console then shows the recovery file name and the command to start it:
+The build script then reports the result itself and prints how to start it:
 
 ```text
-SDCARD_PRINT_FILE FILENAME=plr/<file>.gcode
+PLR: recovery file ready  (18432 G-code lines)
+  plr/<file>.gcode
+
+  Start it with:   PLR_RESUME
+  or:              SDCARD_PRINT_FILE FILENAME='plr/<file>.gcode'
 ```
+
+`PLR_RESUME` is the safer of the two: it quotes the name for you, which matters
+when the file name contains a space or an apostrophe.
+
+If the build fails, it says so and the previous recovery file is left untouched
+— it never reports success it cannot back up.
 
 After a successful recovery print, the `END_PRINT` patch schedules automatic cleanup.
 
@@ -184,6 +212,7 @@ After a successful recovery print, the `END_PRINT` patch schedules automatic cle
 
 | Command | Purpose |
 |---|---|
+| `PLR_RESUME` | Start the recovery print that was built |
 | `PLR_STATUS` | Display saved recovery information |
 | `PLR_CAPTURE_POSITION` | Manually capture the current position for testing |
 | `PLR_SAVE_LAYER Z=...` | Store a layer-height checkpoint |
@@ -199,8 +228,10 @@ point and is therefore missing from the resumed body:
 |---|---|
 | Bed and nozzle temperature | parsed from `START_PRINT` |
 | Position X/Y/Z | from the capture |
-| Extruder position | `G92 E` from the capture |
+| Extruder position | `G92 E` from the capture (absolute mode) |
+| Extrusion mode | last `M82`/`M83` before the cut point |
 | Part cooling fan | last `M106`/`M107` before the cut point |
+| Preview thumbnail | slicer header copied from the original file |
 
 Fan recovery skips secondary fans (`M106 P1`, `P2`, ...) and only restores
 the default part fan. If the slicer had the fan off at that point, `M107` is
@@ -210,6 +241,43 @@ Not currently restored: `M220` speed factor, `M221` flow factor, and bed mesh.
 Acceleration and velocity limits are not restored either, but Orca-style
 output re-emits `SET_VELOCITY_LIMIT` on almost every feature change, so they
 correct themselves within a few moves.
+
+---
+
+## Edge cases the build script handles
+
+**Power loss during a recovery print.** The captured path is then the recovery
+file itself, which is also where the script writes. Rebuilding in place would
+delete the source mid-read and leave a header with no moves — and no
+`END_PRINT`, so the heaters would stay on. The script detects this, snapshots
+the source first, and rebuilds from the snapshot. Layer comments are kept in the
+body for exactly this reason, so a chained recovery still reads the real layer
+height instead of falling back to the captured Z.
+
+**Power loss while idle.** The detection input fires whenever 24V drops,
+including when you flip the mains switch on a machine that is not printing.
+The capture is then skipped entirely — storing a placeholder path would raise a
+false recovery on the next boot and, worse, overwrite a genuine pending one. The
+safe shutdown still runs. The console shows:
+
+```text
+PLR power loss while idle - nothing to recover
+PLR shutting down host
+```
+
+**File names with spaces or apostrophes.** Klipper parses extended parameters
+with `shlex` and then `ast.literal_eval`, so a path has to survive both layers.
+An unescaped name containing an apostrophe aborts the capture macro part-way —
+which means the recovery flag is never written either, and PLR silently does
+nothing. Both the capture macro and the reader handle every quoting case.
+
+**A slicer that emits no `;Z:` comments.** The script falls back to the captured
+Z and says so loudly, because that value may be a z-hop height rather than the
+real layer height. Check the `G1 Z` line in the resume file before starting it.
+
+**An empty or truncated body.** A read error through a pipe still reports
+success, so the emitted body is counted rather than trusted. If nothing came
+out, the build fails and the existing recovery file is left alone.
 
 ---
 

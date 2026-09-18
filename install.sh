@@ -65,11 +65,11 @@ fi
 
 echo "$Z_LIFT" | grep -Eq '^[0-9]+([.][0-9]+)?$' || die "Z_LIFT must be a positive number."
 
+# Only ask on a first install. A re-run - including an unattended one from
+# Moonraker's update manager - keeps what is already stored.
 if [ -f "$SETTINGS_FILE" ]; then
-    read -r -p "Default bed temperature [${DEF_BED}]: " new_bed || true
-    read -r -p "Default nozzle temperature [${DEF_EXT}]: " new_ext || true
-    DEF_BED="${new_bed:-$DEF_BED}"
-    DEF_EXT="${new_ext:-$DEF_EXT}"
+    ok "Using saved settings (pin ${PLR_PIN}, Z lift ${Z_LIFT}mm, bed ${DEF_BED}, nozzle ${DEF_EXT})"
+    echo "    To change them: edit ${SETTINGS_FILE} and re-run this script."
 else
     read -r -p "Default bed temperature [60]: " DEF_BED || true
     read -r -p "Default nozzle temperature [240]: " DEF_EXT || true
@@ -198,7 +198,20 @@ ok "PLR configuration and scripts installed"
 SUDOERS_FILE="/etc/sudoers.d/klipper-plr"
 
 if [ "$PLR_SHUTDOWN" = "1" ]; then
-    if sudo -n true 2>/dev/null || sudo -v 2>/dev/null; then
+    # Ask for sudo up front and let the prompt be visible. Hiding stderr here
+    # swallows the password prompt and the script looks like it has hung.
+    have_sudo=0
+    if sudo -n true 2>/dev/null; then
+        have_sudo=1
+    else
+        echo ""
+        info "The shutdown rule needs root. You may be asked for your password."
+        if sudo -v; then
+            have_sudo=1
+        fi
+    fi
+
+    if [ "$have_sudo" -eq 1 ]; then
         tmp_sudo="$(mktemp)"
         printf '%s ALL=(root) NOPASSWD: /sbin/shutdown\n' "$(id -un)" > "$tmp_sudo"
 

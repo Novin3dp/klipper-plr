@@ -61,11 +61,23 @@ Do not continue if the captured position does not match the expected last execut
 ```bash
 ~/printer_data/plr/plr_build.sh
 ls -lh ~/printer_data/gcodes/plr/
-head -14 ~/printer_data/gcodes/plr/<file>.gcode
+```
+
+Read the script's own output. It reports the layer height it chose, the
+extrusion mode, the fan state, whether a preview was copied, and finally how to
+start the file. Any warning it prints is worth reading before you continue.
+
+Then inspect the generated header. Thumbnail comments come first, so skip to the
+real header:
+
+```bash
+sed -n '/^M118 PLR START/,/^M118 PLR RESUMING/p' ~/printer_data/gcodes/plr/<file>.gcode
 tail -5 ~/printer_data/gcodes/plr/<file>.gcode
 ```
 
-Check that the recovery header homes X/Y first, establishes safe Z, moves X/Y, then lowers Z to the saved layer height and restores E.
+Check that it homes X/Y first, establishes safe Z, moves X/Y at that safe
+height, and only then lowers Z to the saved layer height. The tail must contain
+`END_PRINT` — without it the heaters stay on when the recovery finishes.
 
 ## 5. Dry run — no filament
 
@@ -106,7 +118,7 @@ Only after the dry run passes:
 4. Restore power.
 5. Run `FIRMWARE_RESTART`.
 6. Check `PLR_STATUS`.
-7. Start the generated `plr/<file>.gcode` recovery file.
+7. Run `PLR_RESUME`.
 8. Watch the entire recovery movement.
 
 At the end, the console should show the PLR cleanup message and `PLR_STATUS` should show zero/empty recovery data.
@@ -116,3 +128,35 @@ At the end, the console should show the PLR cleanup message and `PLR_STATUS` sho
 Start a recovery and cancel it before completion. Verify that the recovery data remains available. This is intentional: cancellation must not falsely mark a recovery as completed.
 
 Use `PLR_FORCE_CLEAR` only when you deliberately want to discard a pending recovery.
+
+## 8. Power loss while idle
+
+With no print running, cut power. The console should show:
+
+```text
+PLR power loss while idle - nothing to recover
+```
+
+Then restart Klipper. Nothing should be announced, and `PLR_STATUS` should still
+read all zeros. A false recovery here is a bug: it would overwrite real recovery
+data the next time it mattered.
+
+## 9. Chained recovery (optional, but worth doing once)
+
+Start a recovery print and cut power again part-way through it. After restarting,
+the build script should print:
+
+```text
+Chained recovery: the source IS the current resume file
+Snapshot taken, rebuilding from it
+```
+
+Verify the rebuilt file still has a real body and still ends with `END_PRINT`:
+
+```bash
+wc -l ~/printer_data/gcodes/plr/<file>.gcode
+tail -3 ~/printer_data/gcodes/plr/<file>.gcode
+```
+
+A file that shrank to roughly a dozen lines means the source was destroyed
+during the rebuild — stop and report it.
